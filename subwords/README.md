@@ -19,3 +19,15 @@ In the "subwords/" folder:
 python -u how_to_run.py
 ```
 ![](./images/how_to_run.png)
+
+## Sample input and output
+
+Given the following input:
+```python
+output = tokenizer.encode("Hello, y'all! How are you 😁 ?")
+print(output.tokens)
+```
+The output will be:
+```
+['He', 'll', 'o', ',', 'y', "'", 'all', '!', 'How', 'are', 'you', '?']
+```
