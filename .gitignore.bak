@@ -129,9 +129,3 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-<<<<<<< Updated upstream
-
-raw_data/
-=======
-raw_data
->>>>>>> Stashed changes
