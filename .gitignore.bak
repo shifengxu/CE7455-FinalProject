@@ -6,9 +6,6 @@ __pycache__/
 # C extensions
 *.so
 
-.idea
-raw_data
-
 # Distribution / packaging
 .Python
 build/
@@ -132,9 +129,3 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-<<<<<<< Updated upstream
-
-raw_data/
-=======
-raw_data
->>>>>>> Stashed changes
