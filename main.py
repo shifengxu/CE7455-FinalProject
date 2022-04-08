@@ -8,6 +8,9 @@ import os.path as OsPath
 
 from data import Corpus, get_batch
 from models.rnn import RNNModel
+from utils import log_info
+
+log_fn = log_info  # define the log function
 
 parser = argparse.ArgumentParser(description='CE7455 Final Project')
 parser.add_argument('--data_dir', type=str, default='./data/',
@@ -20,11 +23,13 @@ parser.add_argument('--nhid', type=int, default=200,
                     help='number of hidden units per layer')
 parser.add_argument('--nlayers', type=int, default=2,
                     help='number of layers')
+parser.add_argument('--subword_vocab_size', type=int, default=200,
+                    help='subword vocabulary size')
 parser.add_argument('--lr', type=float, default=20,
                     help='initial learning rate')
 parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
-parser.add_argument('--epochs', type=int, default=20,
+parser.add_argument('--epochs', type=int, default=40,
                     help='upper epoch limit')
 parser.add_argument('--batch_size', type=int, default=20, metavar='N',
                     help='batch size')
@@ -44,6 +49,7 @@ parser.add_argument('--nhead', type=int, default=2,
                     help='the number of heads in the encoder/decoder of the transformer model')
 args = parser.parse_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+log_fn(f"args: {args}")
 
 # Set the random seed manually for reproducibility.
 torch.manual_seed(args.seed)
@@ -52,7 +58,8 @@ corpus = Corpus(
     OsPath.join(args.data_dir, 'adolescent_train.txt'),
     OsPath.join(args.data_dir, 'adolescent_valid.txt'),
     OsPath.join(args.data_dir, 'adult_test.txt'),
-    log_fn=print
+    subword_vocab_size=args.subword_vocab_size,
+    log_fn=log_fn
 )
 train_data, val_data, test_data = corpus.batchify_all(args.batch_size, device)
 
@@ -105,13 +112,14 @@ def train(epoch, model, lr, criterion):
             cur_loss = loss_total / loss_cnt
             msg = f"E{epoch:03d} | {b_num:5d}/{b_cnt} batches | lr {lr:02.4f} | " \
                   f"loss {cur_loss:6.3f} | ppl {math.exp(cur_loss):9.2f}"
-            print(msg)
+            log_fn(msg)
             loss_total = 0.
             loss_cnt = 0
 
 def main():
     ntokens = corpus.ntokens
-    model = RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers, args.dropout, args.tied)
+    model = RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
+                     args.dropout, args.tied, log_fn=log_fn)
     model = model.to(device)
     criterion = nn.NLLLoss()
     lr = args.lr
@@ -120,11 +128,11 @@ def main():
     for epoch in range(1, args.epochs + 1):
         train(epoch, model, lr, criterion)
         l, a, n, d = evaluate(val_data, model, criterion)
-        print(f"End E{epoch:03d} | valid loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d}")
+        log_fn(f"End E{epoch:03d} | valid loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d}")
         val_loss = l
         l, a, n, d = evaluate(test_data, model, criterion)
-        print(f"End E{epoch:03d} |  test loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d}")
-        print('=' * 89)
+        log_fn(f"End E{epoch:03d} |  test loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d}")
+        log_fn('=' * 89)
         # Save the model if the validation loss is the best we've seen so far.
         if not best_val_loss or val_loss < best_val_loss:
             with open(args.save, 'wb') as f:
@@ -132,7 +140,7 @@ def main():
             best_val_loss = val_loss
         else:
             # Anneal the learning rate if no improvement has been seen in the validation dataset.
-            lr /= 4.0
+            lr /= 2.0
     # for epoch
 
     # Load the best saved model.
@@ -146,9 +154,9 @@ def main():
 
     # Run on test data.
     l, a, n, d  = evaluate(test_data, model, criterion)
-    print('=' * 89)
-    print(f"End. test loss {l:5.2f}; ppl {math.exp(l):8.2f} | accu {a:6.4f} = {n}/{d}")
-    print('=' * 89)
+    log_fn('=' * 89)
+    log_fn(f"End. test loss {l:5.2f}; ppl {math.exp(l):8.2f} | accu {a:6.4f} = {n}/{d}")
+    log_fn('=' * 89)
 
 if __name__ == '__main__':
     main()

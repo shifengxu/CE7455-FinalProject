@@ -1,6 +1,7 @@
 import os
 from io import open
 import torch
+from subwords.subword_model import SubwordModel
 
 # Starting from sequential data, batchify arranges the dataset into columns.
 # For instance, with the alphabet as the sequence and batch size 4, we'd get
@@ -52,17 +53,27 @@ class Dictionary(object):
         return len(self.idx2word)
 
 class Corpus(object):
-    def __init__(self, train_filepath, valid_filepath, test_filepath, log_fn=print):
+    def __init__(self, train_filepath, valid_filepath, test_filepath,
+                 subword_vocab_size=None, log_fn=print):
         self.dictionary = Dictionary()
         self.ntokens = 0
         self.batch_size = 0
+        self._log_fn = lambda msg: log_fn(msg) if log_fn else None
+        self._log_fn(f"corpus.subword_vocab_size: {subword_vocab_size}")
+        if subword_vocab_size:
+            self.subword_model = SubwordModel(subword_vocab_size)
+            files = [train_filepath, valid_filepath]
+            self._log_fn(f"corpus.subword_model.train([{';'.join(files)}])...")
+            self.subword_model.train(files)
+            self._log_fn(f"corpus.subword_model.train([{';'.join(files)}])...Done")
+        else:
+            self.subword_model = None
         self.token_train = self.tokenize(train_filepath)
         self.token_valid = self.tokenize(valid_filepath)
         self.token_test  = self.tokenize(test_filepath)
         self.batched_train = None
         self.batched_valid = None
         self.batched_test = None
-        self._log_fn = lambda msg: log_fn(msg) if log_fn else None
         self._log_fn(f"corpus.token_train: {len(self.token_train):7d} {train_filepath}")
         self._log_fn(f"corpus.token_valid: {len(self.token_valid):7d} {valid_filepath}")
         self._log_fn(f"corpus.token_test : {len(self.token_test):7d} {test_filepath}")
@@ -70,25 +81,28 @@ class Corpus(object):
     def tokenize(self, path):
         """Tokenizes a text file."""
         assert os.path.exists(path)
-        # Add words to the dictionary
-        with open(path, 'r', encoding="utf8") as f:
-            for line in f:
-                words = line.split() + ['<eos>']
-                for word in words:
-                    self.dictionary.add_word(word)
 
         # Tokenize file content
+        ids_arr = []
         with open(path, 'r', encoding="utf8") as f:
-            ids_arr = []
             for line in f:
-                words = line.split() + ['<eos>']
+                words = self._split_line(line)
                 ids = []
                 for word in words:
-                    ids.append(self.dictionary.word2idx[word])
+                    idx = self.dictionary.add_word(word)  # Add words to the dictionary
+                    ids.append(idx)
                 ids_arr.append(torch.tensor(ids).type(torch.int64))
-
-            res = torch.cat(ids_arr)
+        # with
+        res = torch.cat(ids_arr)
         return res
+
+    def _split_line(self, line):
+        if self.subword_model:
+            words = self.subword_model.encode(line)
+        else:
+            words = line.split()
+        words += ['<eos>']
+        return words
 
     def batchify_all(self, batch_size, device):
         eval_batch_size = 10
