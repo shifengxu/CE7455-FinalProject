@@ -23,7 +23,7 @@ parser.add_argument('--nhid', type=int, default=200,
                     help='number of hidden units per layer')
 parser.add_argument('--nlayers', type=int, default=2,
                     help='number of layers')
-parser.add_argument('--subword_vocab_size', type=int, default=200,
+parser.add_argument('--subword_vocab_size', type=int, default=0,
                     help='subword vocabulary size')
 parser.add_argument('--lr', type=float, default=20,
                     help='initial learning rate')
@@ -74,7 +74,8 @@ def evaluate(data_source, model, criterion, eval_batch_size=10):
         for i in range(0, data_source.size(0) - 1, args.bptt):
             inputs, targets = get_batch(data_source, i, args.bptt)
             # inputs size: (35, 10), targets size (350,). 35 is bptt, 10 is bsz
-            outputs = model(inputs)
+            chars3 = corpus.word_to_char(inputs)
+            outputs = model(inputs, chars3)
             # outputs size(350, 37974)
             total_loss += len(inputs) * criterion(outputs, targets).item()
             preds = torch.argmax(outputs, dim=1)
@@ -94,8 +95,9 @@ def train(epoch, model, lr, criterion):
     for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
         b_num = batch + 1 # batch number
         inputs, targets = get_batch(train_data, i, args.bptt)
+        chars3 = corpus.word_to_char(inputs)
         model.zero_grad()
-        output = model(inputs)
+        output = model(inputs, chars3)
         # output size: [700, 33278]
         loss = criterion(output, targets)
         loss.backward()
@@ -118,8 +120,10 @@ def train(epoch, model, lr, criterion):
 
 def main():
     ntokens = corpus.ntokens
+    char_cnt = corpus.char_count + 1  # char id starts from 1. So need to plus 1.
     model = RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
-                     args.dropout, args.tied, log_fn=log_fn)
+                     args.dropout, args.tied, log_fn=log_fn, device=device,
+                     char_cnt=char_cnt, char_cnn_chnl=args.bptt)
     model = model.to(device)
     criterion = nn.NLLLoss()
     lr = args.lr

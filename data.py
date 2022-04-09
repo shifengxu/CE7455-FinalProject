@@ -1,6 +1,9 @@
 import os
 from io import open
 import torch
+import numpy as np
+from torch.autograd.variable import Variable
+
 from subwords.subword_model import SubwordModel
 
 # Starting from sequential data, batchify arranges the dataset into columns.
@@ -68,17 +71,26 @@ class Corpus(object):
             self._log_fn(f"corpus.subword_model.train([{';'.join(files)}])...Done")
         else:
             self.subword_model = None
-        self.token_train = self.tokenize(train_filepath)
-        self.token_valid = self.tokenize(valid_filepath)
-        self.token_test  = self.tokenize(test_filepath)
+        self.char_cnt_dict = {}
+        self.token_train = self.tokenize(train_filepath, self.char_cnt_dict)
+        self.token_valid = self.tokenize(valid_filepath, self.char_cnt_dict)
+        self.token_test  = self.tokenize(test_filepath, self.char_cnt_dict)
+        # Items are ordered by decreasing frequency
+        sorted_items = sorted(self.char_cnt_dict.items(), key=lambda x: (-x[1], x[0]))
+        # dict, char to id. And id start from 1.
+        self.char_id_dict = {v[0]: i + 1 for i, v in enumerate(sorted_items)}
+        self.char_count = len(self.char_id_dict)
+
         self.batched_train = None
         self.batched_valid = None
         self.batched_test = None
-        self._log_fn(f"corpus.token_train: {len(self.token_train):7d} {train_filepath}")
-        self._log_fn(f"corpus.token_valid: {len(self.token_valid):7d} {valid_filepath}")
-        self._log_fn(f"corpus.token_test : {len(self.token_test):7d} {test_filepath}")
+        self._log_fn(f"corpus.char_cnt_dict: {len(self.char_cnt_dict)}")
+        self._log_fn(f"corpus.char_id_dict : {len(self.char_id_dict)}")
+        self._log_fn(f"corpus.token_train  : {len(self.token_train):7d} {train_filepath}")
+        self._log_fn(f"corpus.token_valid  : {len(self.token_valid):7d} {valid_filepath}")
+        self._log_fn(f"corpus.token_test   : {len(self.token_test):7d} {test_filepath}")
 
-    def tokenize(self, path):
+    def tokenize(self, path, char_cnt_dict: dict = None):
         """Tokenizes a text file."""
         assert os.path.exists(path)
 
@@ -91,7 +103,16 @@ class Corpus(object):
                 for word in words:
                     idx = self.dictionary.add_word(word)  # Add words to the dictionary
                     ids.append(idx)
+                    if char_cnt_dict is not None:
+                        for c in word:
+                            if c in char_cnt_dict:
+                                char_cnt_dict[c] += 1
+                            else:
+                                char_cnt_dict[c] = 1
+                        # for char
+                # for word
                 ids_arr.append(torch.tensor(ids).type(torch.int64))
+            # for line
         # with
         res = torch.cat(ids_arr)
         return res
@@ -117,3 +138,28 @@ class Corpus(object):
         self._log_fn(f"corpus.batched_valid: {len(self.batched_valid):6d}")
         self._log_fn(f"corpus.batched_test : {len(self.batched_test):6d}")
         return self.batched_train, self.batched_valid, self.batched_test
+
+    def word_to_char(self, word_tensor):
+        """
+        convert word tensor to char matrix.
+        Usually, word_tensor is a 2D tensor, such as (35, 20).
+        And "35" is bptt, while "20" is batch size.
+        :param word_tensor:
+        :return:
+        """
+        res = []
+        for _, x in enumerate(word_tensor):
+            x_arr = []
+            for _, w_idx in enumerate(x):  # word index
+                w_str = self.dictionary.idx2word[w_idx]
+                c_idx_arr = []
+                for c in w_str:
+                    if c in self.char_id_dict:
+                        c_idx_arr.append(self.char_id_dict[c])
+                    else:
+                        self._log_fn(f"!!![Warn] Not found char {c} in corpus.char_id_dict.")
+                x_arr.append(c_idx_arr)
+            # for
+            res.append(x_arr)
+        # for
+        return res
