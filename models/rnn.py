@@ -9,8 +9,7 @@ class RNNModel(nn.Module):
 
     def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5,
                  tie_weights=False, log_fn=print, device='cuda',
-                 char_mode='CNN', char_cnt=200, char_emsize=25, char_nhid=200,
-                 char_cnn_chnl=35):
+                 char_mode='CNN', char_cnt=200, char_emsize=25, char_nhid=200):
         super(RNNModel, self).__init__()
         self.ntoken = ntoken
         self.drop = nn.Dropout(dropout)
@@ -40,7 +39,6 @@ class RNNModel(nn.Module):
         self.char_cnt = char_cnt
         self.char_emsize = char_emsize
         self.char_nhid = char_nhid
-        self.char_cnn_chnl = char_cnn_chnl
         self.char_embeds = nn.Embedding(char_cnt, char_emsize)
         wt = self.char_embeds.weight
         bias = np.sqrt(3.0 / wt.size(1))  # init embedding. copied from A1
@@ -49,8 +47,8 @@ class RNNModel(nn.Module):
             self.char_lstm = nn.LSTM(char_emsize, char_nhid, num_layers=1)
             init_lstm(self.char_lstm)
         else:
-            self.char_cnn3 = nn.Conv2d(in_channels=char_cnn_chnl, out_channels=char_cnn_chnl,
-                                       kernel_size=(3, 3), padding=(2, 1))
+            self.char_cnn3 = nn.Conv2d(in_channels=1, out_channels=char_emsize,
+                                       kernel_size=(3, char_emsize), padding=(2, 0))
 
     @staticmethod
     def gen_rnn(rnn_type, ninp, nhid, nlayers, dropout):
@@ -103,32 +101,25 @@ class RNNModel(nn.Module):
         if self.char_mode == 'LSTM':
             return None
         else:
-            old_size0 = chars3_masked.size(0)
-            if old_size0 < self.char_cnn_chnl:
-                size = chars3_masked.size()
-                size = list(size)
-                size[0] = self.char_cnn_chnl - old_size0
-                tmp = np.zeros(size, dtype='int')
-                tmp = Variable(torch.LongTensor(tmp)).to(self.device)
-                chars3_masked = torch.cat((chars3_masked, tmp), dim=0)
-            # if
             chars_embeds = self.char_embeds(chars3_masked)
             # size: (35, 20, 13, 25). (bptt, bsz, max_word_len, char_emsize)
 
+            d0, d1, d2, d3 = chars_embeds.size()
+            chars_embeds = chars_embeds.view(-1, d2, d3)  # (700 13 25)
+            chars_embeds = chars_embeds.unsqueeze(1)      # (700 1 13 25)
+
             # Creating Character level representation using Convolutional Neural Network
             # followed by a Maxpooling Layer
-            chars_embeds = chars_embeds.permute(1, 0, 2, 3) # (20 35 13 25)
-            # size: (20 35 15 25) <= (20 35 13 25)
+            # size: (700 25 15 1) <= (700 1 13 25)
             out3 = self.char_cnn3(chars_embeds)
 
-            # size: (20 35 1 25) <= (20 35 15 25)
+            # size: (700 25 1 1) <= (700 25 15 1)
             chars_embeds = nn.functional.max_pool2d(out3, kernel_size=(out3.size(2), 1))
 
-            # size: (20 35 25) <= (20 35 1 25)
+            # size: (700 25) <= (700 25 1 1)
+            chars_embeds = chars_embeds.squeeze(3)
             chars_embeds = chars_embeds.squeeze(2)
-            chars_embeds = chars_embeds.permute(1, 0, 2) # (35 20 25)
-            if chars_embeds.size(0) > old_size0:
-                chars_embeds = chars_embeds[:old_size0]
+            chars_embeds = chars_embeds.view(d0, d1, -1)
         return chars_embeds
 
     def init_hidden(self, bsz):

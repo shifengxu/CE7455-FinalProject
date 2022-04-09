@@ -123,7 +123,7 @@ def main():
     char_cnt = corpus.char_count + 1  # char id starts from 1. So need to plus 1.
     model = RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
                      args.dropout, args.tied, log_fn=log_fn, device=device,
-                     char_cnt=char_cnt, char_cnn_chnl=args.bptt)
+                     char_cnt=char_cnt)
     model = model.to(device)
     criterion = nn.NLLLoss()
     lr = args.lr
