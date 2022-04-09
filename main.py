@@ -7,7 +7,8 @@ import torch.onnx
 import os.path as OsPath
 
 from data import Corpus, get_batch
-from models.rnn import RNNModel
+from models.model_rnn import RNNModel
+import utils
 from utils import log_info
 
 log_fn = log_info  # define the log function
@@ -23,8 +24,12 @@ parser.add_argument('--nhid', type=int, default=200,
                     help='number of hidden units per layer')
 parser.add_argument('--nlayers', type=int, default=2,
                     help='number of layers')
-parser.add_argument('--subword_vocab_size', type=int, default=0,
-                    help='subword vocabulary size')
+parser.add_argument('--subword_vs_list', nargs='+', type=int, default=[0, 5000],
+                    help='subword vocabulary size list. 0 means no subword')
+parser.add_argument('--char_mode_list', nargs='+', type=str, default=['None', 'CNN'],
+                    help='char_mode list: None|CNN|LSTM')
+parser.add_argument('--gpu_ids', nargs='+', type=int, default=[0],
+                    help='GPU ID list')
 parser.add_argument('--lr', type=float, default=20,
                     help='initial learning rate')
 parser.add_argument('--clip', type=float, default=0.25,
@@ -47,29 +52,28 @@ parser.add_argument('--save', type=str, default='model.pt',
                     help='path to save the final model')
 parser.add_argument('--nhead', type=int, default=2,
                     help='the number of heads in the encoder/decoder of the transformer model')
+parser.add_argument('--train_file_list', nargs='+', type=str, default=['adolescent_train.txt'],
+                    help='train file list')
+parser.add_argument('--valid_file_list', nargs='+', type=str, default=['adolescent_valid.txt'],
+                    help='valid file list')
+parser.add_argument('--test_file_list', nargs='+', type=str, default=['adult_test.txt'],
+                    help='test file list')
 args = parser.parse_args()
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = f"cuda:{args.gpu_ids[0]}" if torch.cuda.is_available() and args.gpu_ids else "cpu"
+device = torch.device(device)
 log_fn(f"args: {args}")
+log_fn(f"device: {device}")
 
 # Set the random seed manually for reproducibility.
 torch.manual_seed(args.seed)
 
-corpus = Corpus(
-    OsPath.join(args.data_dir, 'adolescent_train.txt'),
-    OsPath.join(args.data_dir, 'adolescent_valid.txt'),
-    OsPath.join(args.data_dir, 'adult_test.txt'),
-    subword_vocab_size=args.subword_vocab_size,
-    log_fn=log_fn
-)
-train_data, val_data, test_data = corpus.batchify_all(args.batch_size, device)
-
-def evaluate(data_source, model, criterion, eval_batch_size=10):
+def evaluate(data_source, model, criterion, corpus: Corpus):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     total_loss = 0.
     numerator = 0
     denominator = 0
-    model.init_hidden(eval_batch_size)
+    model.init_hidden(args.batch_size)
     with torch.no_grad():
         for i in range(0, data_source.size(0) - 1, args.bptt):
             inputs, targets = get_batch(data_source, i, args.bptt)
@@ -85,7 +89,7 @@ def evaluate(data_source, model, criterion, eval_batch_size=10):
     accu = numerator / denominator
     return loss, accu, numerator, denominator
 
-def train(epoch, model, lr, criterion):
+def train(epoch, train_data, model, lr, criterion, corpus: Corpus):
     # Turn on training mode which enables dropout.
     model.train()
     loss_total = 0.
@@ -118,30 +122,55 @@ def train(epoch, model, lr, criterion):
             loss_total = 0.
             loss_cnt = 0
 
-def main():
+def run(subword_vs, char_mode):
+    train_file_list = [OsPath.join(args.data_dir, f) for f in args.train_file_list]
+    valid_file_list = [OsPath.join(args.data_dir, f) for f in args.valid_file_list]
+    test_file_list  = [OsPath.join(args.data_dir, f) for f in args.test_file_list]
+    corpus = Corpus(
+        train_file_list,
+        valid_file_list,
+        test_file_list,
+        subword_vocab_size=subword_vs,
+        log_fn=log_fn
+    )
+    train_data = corpus.batchify(train_file_list, args.batch_size)
+    train_data = train_data.to(device)
+    val_data   = corpus.batchify(valid_file_list, args.batch_size)
+    val_data   = val_data.to(device)
+    test_data_list = []
+    for file in test_file_list:
+        batched = corpus.batchify([file], args.batch_size)
+        batched = batched.to(device)
+        test_data_list.append((batched, file))
+
     ntokens = corpus.ntokens
+    if char_mode is None or char_mode.lower() == 'none':
+        char_mode = ''
     char_cnt = corpus.char_count + 1  # char id starts from 1. So need to plus 1.
     model = RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
                      args.dropout, args.tied, log_fn=log_fn, device=device,
-                     char_cnt=char_cnt)
+                     char_mode=char_mode, char_cnt=char_cnt)
     model = model.to(device)
     criterion = nn.NLLLoss()
     lr = args.lr
     best_val_loss = None
 
     for epoch in range(1, args.epochs + 1):
-        train(epoch, model, lr, criterion)
-        l, a, n, d = evaluate(val_data, model, criterion)
+        log_fn(f"Epoch {epoch:03d}/{args.epochs} ==================================================")
+        train(epoch, train_data, model, lr, criterion, corpus)
+        l, a, n, d = evaluate(val_data, model, criterion, corpus)
         log_fn(f"End E{epoch:03d} | valid loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d}")
         val_loss = l
-        l, a, n, d = evaluate(test_data, model, criterion)
-        log_fn(f"End E{epoch:03d} |  test loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d}")
-        log_fn('=' * 89)
+        for test_data, file in test_data_list:
+            l, a, n, d = evaluate(test_data, model, criterion, corpus)
+            log_fn(f"End E{epoch:03d} |  test loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d} {file}")
         # Save the model if the validation loss is the best we've seen so far.
         if not best_val_loss or val_loss < best_val_loss:
+            log_fn(f"Save: {args.save}... ")
             with open(args.save, 'wb') as f:
                 torch.save(model, f)
             best_val_loss = val_loss
+            log_fn(f"Save: {args.save}...Done. best_val_loss: {best_val_loss :6.4f}")
         else:
             # Anneal the learning rate if no improvement has been seen in the validation dataset.
             lr /= 2.0
@@ -157,10 +186,22 @@ def main():
             model.rnn.flatten_parameters()
 
     # Run on test data.
-    l, a, n, d  = evaluate(test_data, model, criterion)
+    for test_data, file in test_data_list:
+        l, a, n, d  = evaluate(test_data, model, criterion, corpus)
+        log_fn(f"End. test loss {l:5.2f}; ppl {math.exp(l):8.2f} | accu {a:6.4f} = {n}/{d} {file}")
     log_fn('=' * 89)
-    log_fn(f"End. test loss {l:5.2f}; ppl {math.exp(l):8.2f} | accu {a:6.4f} = {n}/{d}")
-    log_fn('=' * 89)
+
+def main():
+    for vs in args.subword_vs_list:
+        for char_mode in args.char_mode_list:
+            log_file = f"./output_sws_{vs:05d}_chm_{char_mode}.log"
+            print(f"Log file: {log_file} open...")
+            utils.log_info_file = open(log_file, 'w')
+            run(vs, char_mode)
+            utils.log_info_file.close()
+            utils.log_info_file = None
+            print(f"Log file: {log_file} closed.")
+    # for
 
 if __name__ == '__main__':
     main()

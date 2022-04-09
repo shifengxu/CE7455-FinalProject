@@ -1,8 +1,6 @@
 import os
 from io import open
 import torch
-import numpy as np
-from torch.autograd.variable import Variable
 
 from subwords.subword_model import SubwordModel
 
@@ -17,14 +15,14 @@ from subwords.subword_model import SubwordModel
 # These columns are treated as independent by the model, which means that the
 # dependence of e. g. 'g' on 'f' can not be learned, but allows more efficient
 # batch processing.
-def batchify(data: torch.Tensor, bsz, device):
+def _batchify(data: torch.Tensor, bsz):
     # Work out how cleanly we can divide the dataset into bsz parts.
     nbatch = data.size(0) // bsz
     # Trim off any extra elements that wouldn't cleanly fit (remainders).
     data = data.narrow(0, 0, nbatch * bsz)
     # Evenly divide the data across the bsz batches.
     data = data.view(bsz, -1).t().contiguous()
-    return data.to(device)
+    return data
 
 # get_batch subdivides the source data into chunks of length args.bptt.
 # If source is equal to the example output of the batchify function, with
@@ -56,39 +54,61 @@ class Dictionary(object):
         return len(self.idx2word)
 
 class Corpus(object):
-    def __init__(self, train_filepath, valid_filepath, test_filepath,
+    def __init__(self, train_file_list: [], valid_file_list: [], test_file_list: [],
                  subword_vocab_size=None, log_fn=print):
         self.dictionary = Dictionary()
-        self.ntokens = 0
-        self.batch_size = 0
+        self.file_dict = {}  # dict, filename to tokens
         self._log_fn = lambda msg: log_fn(msg) if log_fn else None
+
+        # ----------------------------------------------------------- log file list
+        self._log_fn(f"corpus.train_file_list: {len(train_file_list)}")
+        for file in train_file_list: self._log_fn(f"        {file}")
+        self._log_fn(f"corpus.valid_file_list: {len(valid_file_list)}")
+        for file in valid_file_list: self._log_fn(f"        {file}")
+        self._log_fn(f"corpus.test_file_list: {len(test_file_list)}")
+        [self._log_fn(f"        {file}") for file in test_file_list]
+
+        # ----------------------------------------------------------- subword
         self._log_fn(f"corpus.subword_vocab_size: {subword_vocab_size}")
         if subword_vocab_size:
             self.subword_model = SubwordModel(subword_vocab_size)
-            files = [train_filepath, valid_filepath]
-            self._log_fn(f"corpus.subword_model.train([{';'.join(files)}])...")
+            files = train_file_list + valid_file_list
+            self._log_fn(f"corpus.subword_model.train({len(files)} files)...")
+            for file in files: self._log_fn(f"        {file}")
             self.subword_model.train(files)
-            self._log_fn(f"corpus.subword_model.train([{';'.join(files)}])...Done")
+            self._log_fn(f"corpus.subword_model.train({len(files)} files)...Done")
         else:
             self.subword_model = None
+            self._log_fn(f"corpus.subword_model = None. Corpus will not use subword.")
+
+        # ----------------------------------------------------------- tokenize
         self.char_cnt_dict = {}
-        self.token_train = self.tokenize(train_filepath, self.char_cnt_dict)
-        self.token_valid = self.tokenize(valid_filepath, self.char_cnt_dict)
-        self.token_test  = self.tokenize(test_filepath, self.char_cnt_dict)
+        self._log_fn(f"corpus tokenize...")
+        for file in train_file_list:
+            tokens = self.tokenize(file, self.char_cnt_dict)
+            self._log_fn(f"        train tokens: {len(tokens):6d}  {file}")
+            self.file_dict[file] = tokens
+        for file in valid_file_list:
+            tokens = self.tokenize(file, self.char_cnt_dict)
+            self._log_fn(f"        valid tokens: {len(tokens):6d}  {file}")
+            self.file_dict[file] = tokens
+        for file in test_file_list:
+            tokens = self.tokenize(file, self.char_cnt_dict)
+            self._log_fn(f"        test  tokens: {len(tokens):6d}  {file}")
+            self.file_dict[file] = tokens
+        self.ntokens = len(self.dictionary)
+
+        # ----------------------------------------------------------- char dict
         # Items are ordered by decreasing frequency
         sorted_items = sorted(self.char_cnt_dict.items(), key=lambda x: (-x[1], x[0]))
         # dict, char to id. And id start from 1.
         self.char_id_dict = {v[0]: i + 1 for i, v in enumerate(sorted_items)}
         self.char_count = len(self.char_id_dict)
 
-        self.batched_train = None
-        self.batched_valid = None
-        self.batched_test = None
+        self._log_fn(f"corpus.ntokens      : {self.ntokens}")
+        self._log_fn(f"corpus.char_count   : {self.char_count}")
         self._log_fn(f"corpus.char_cnt_dict: {len(self.char_cnt_dict)}")
         self._log_fn(f"corpus.char_id_dict : {len(self.char_id_dict)}")
-        self._log_fn(f"corpus.token_train  : {len(self.token_train):7d} {train_filepath}")
-        self._log_fn(f"corpus.token_valid  : {len(self.token_valid):7d} {valid_filepath}")
-        self._log_fn(f"corpus.token_test   : {len(self.token_test):7d} {test_filepath}")
 
     def tokenize(self, path, char_cnt_dict: dict = None):
         """Tokenizes a text file."""
@@ -125,19 +145,18 @@ class Corpus(object):
         words += ['<eos>']
         return words
 
-    def batchify_all(self, batch_size, device):
-        eval_batch_size = 10
-        self.batched_train = batchify(self.token_train, batch_size, device)
-        self.batched_valid = batchify(self.token_valid, eval_batch_size, device)
-        self.batched_test  = batchify(self.token_test, eval_batch_size, device)
-        self.ntokens = len(self.dictionary)
-        self.batch_size = batch_size
-        self._log_fn(f"corpus.batch_size   : {self.batch_size}")
-        self._log_fn(f"corpus.ntokens      : {self.ntokens}")
-        self._log_fn(f"corpus.batched_train: {len(self.batched_train):6d}")
-        self._log_fn(f"corpus.batched_valid: {len(self.batched_valid):6d}")
-        self._log_fn(f"corpus.batched_test : {len(self.batched_test):6d}")
-        return self.batched_train, self.batched_valid, self.batched_test
+    def batchify(self, file_list, batch_size):
+        arr = []
+        for file in file_list:
+            tokens = self.file_dict[file]
+            arr.append(tokens)
+        tokens_all = torch.cat(arr)
+        batched = _batchify(tokens_all, batch_size)
+        self._log_fn(f"corpus.batchify({len(file_list)} files, batch_size={batch_size})...")
+        self._log_fn(f"        tokens_all: {len(tokens_all):6d}")
+        self._log_fn(f"        batched   : {len(batched):6d}")
+        [self._log_fn(f"        {f}") for f in file_list]
+        return batched
 
     def word_to_char(self, word_tensor):
         """
