@@ -1,0 +1,19 @@
+cp ../*.py .
+cp -rf ../models/ .
+cp -rf ../subwords/ .
+
+python -u main.py --data_dir ../data/ --gpu_ids 1 \
+	--subword_vs_list 0 200 500 1000 5000 10000 \
+	--char_mode_list None CNN \
+	--epochs 40 \
+	--train_file_list cbt_train.txt \
+	--valid_file_list cbt_valid.txt \
+	--test_file_list adolescent_valid.txt adult_test.txt \
+	--model LSTM \
+	--emsize 200 \
+	--nhid 200 \
+	--nlayers 2 \
+	--batch_size 20 \
+	--lr 20 \
+	--bptt 35
+
