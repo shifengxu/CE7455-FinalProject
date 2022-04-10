@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.onnx
 import os.path as OsPath
+from collections import OrderedDict
 
 from data import Corpus, get_batch
 from models.model_rnn import RNNModel
@@ -155,15 +156,21 @@ def run(subword_vs, char_mode):
     lr = args.lr
     best_val_loss = None
 
+    stat_dict = OrderedDict()  # statistic data dict
+    stat_dict['valid_loss'] = []
+    for f in test_file_list: stat_dict[f"test_loss of {f}"] = []
+
     for epoch in range(1, args.epochs + 1):
         log_fn(f"Epoch {epoch:03d}/{args.epochs} ==================================================")
         train(epoch, train_data, model, lr, criterion, corpus)
         l, a, n, d = evaluate(val_data, model, criterion, corpus)
         log_fn(f"End E{epoch:03d} | valid loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d}")
+        stat_dict['valid_loss'].append(l)
         val_loss = l
         for test_data, file in test_data_list:
             l, a, n, d = evaluate(test_data, model, criterion, corpus)
             log_fn(f"End E{epoch:03d} |  test loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d} {file}")
+            stat_dict[f"test_loss of {file}"].append(l)
         # Save the model if the validation loss is the best we've seen so far.
         if not best_val_loss or val_loss < best_val_loss:
             log_fn(f"Save: {args.save}... ")
@@ -190,6 +197,14 @@ def run(subword_vs, char_mode):
         l, a, n, d  = evaluate(test_data, model, criterion, corpus)
         log_fn(f"End. test loss {l:5.2f}; ppl {math.exp(l):8.2f} | accu {a:6.4f} = {n}/{d} {file}")
     log_fn('=' * 89)
+    for k, ls_list in stat_dict.items():
+        log_fn(k)
+        str_list = [f"{ls:5.2f}" for ls in ls_list]
+        log_fn(','.join(str_list))
+        log_fn(f"{k} ppl")
+        str_list = [f"{math.exp(ls):8.2f}" for ls in ls_list]
+        log_fn(','.join(str_list))
+# run()
 
 def main():
     for vs in args.subword_vs_list:
