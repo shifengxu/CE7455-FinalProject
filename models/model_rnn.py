@@ -9,7 +9,10 @@ class RNNModel(nn.Module):
 
     def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5,
                  tie_weights=False, log_fn=print, device='cuda',
-                 char_mode='LSTM', char_cnt=200, char_emsize=25, char_nhid=200):
+                 fragment_aggregate_mode='LSTM',
+                 fragment_cnt=200,
+                 fragment_emsize=25,
+                 fragment_nhid=200):
         super(RNNModel, self).__init__()
         self.ntoken = ntoken
         self.drop = nn.Dropout(dropout)
@@ -17,8 +20,8 @@ class RNNModel(nn.Module):
         self.device = device
         self.hid_state = None       # hidden state for RNN model.
         inp_size = ninp             # input size
-        if char_mode:
-            inp_size += char_emsize
+        if fragment_aggregate_mode:
+            inp_size += fragment_emsize
         self.rnn = self.gen_rnn(rnn_type, inp_size, nhid, nlayers, dropout)
         self.decoder = nn.Linear(nhid, ntoken)
 
@@ -37,35 +40,35 @@ class RNNModel(nn.Module):
         _log_fn(f"RNNModel.dropout : {dropout}")
         _log_fn(f"RNNModel.tie_weights: {tie_weights}")
 
-        self.char_mode = char_mode
-        self.char_cnt = char_cnt
-        self.char_emsize = char_emsize
-        self.char_nhid = char_nhid
-        _log_fn(f"RNNModel.char_mode  : {self.char_mode}")
-        _log_fn(f"RNNModel.char_cnt   : {self.char_cnt}")
-        _log_fn(f"RNNModel.char_emsize: {self.char_emsize}")
-        _log_fn(f"RNNModel.char_nhid  : {self.char_nhid}")
-        if self.char_mode in ['LSTM', 'CNN']:
-            self.char_embeds = nn.Embedding(char_cnt, char_emsize)
-            wt = self.char_embeds.weight
+        self.fragment_aggregate_mode = fragment_aggregate_mode
+        self.fragment_cnt = fragment_cnt
+        self.fragment_emsize = fragment_emsize
+        self.fragment_nhid = fragment_nhid
+        _log_fn(f"RNNModel.fragment_aggregate_mode: {self.fragment_aggregate_mode}")
+        _log_fn(f"RNNModel.fragment_cnt           : {self.fragment_cnt}")
+        _log_fn(f"RNNModel.fragment_emsize        : {self.fragment_emsize}")
+        _log_fn(f"RNNModel.fragment_nhid          : {self.fragment_nhid}")
+        if self.fragment_aggregate_mode in ['LSTM', 'CNN']:
+            self.fragment_embeds = nn.Embedding(fragment_cnt, fragment_emsize)
+            wt = self.fragment_embeds.weight
             bias = np.sqrt(3.0 / wt.size(1))  # init embedding. copied from A1
             nn.init.uniform_(wt, -bias, bias)
-            _log_fn(f"RNNModel.char_embeds: created")
-        if self.char_mode == 'LSTM':
-            self.char_lstm = nn.LSTM(char_emsize, char_nhid, num_layers=1)
-            init_lstm(self.char_lstm)
-            d = 2 if self.char_lstm.bidirectional else 1
-            self.char_lstm_linear = nn.Linear(d*char_nhid, char_emsize)
-            _log_fn(f"RNNModel.char_lstm       : created")
-            _log_fn(f"RNNModel.char_lstm_linear: created")
-        elif self.char_mode == 'CNN':
-            self.char_cnn3 = nn.Conv2d(in_channels=1, out_channels=char_emsize,
-                                       kernel_size=(3, char_emsize), padding=(2, 0))
-            _log_fn(f"RNNModel.char_cnn3  : created")
-        elif not self.char_mode: # '', 0, None
-            _log_fn(f"RNNModel will not use char-encoding")
+            _log_fn(f"RNNModel.fragment_embeds: created")
+        if self.fragment_aggregate_mode == 'LSTM':
+            self.fragment_lstm = nn.LSTM(fragment_emsize, fragment_nhid, num_layers=1)
+            init_lstm(self.fragment_lstm)
+            d = 2 if self.fragment_lstm.bidirectional else 1
+            self.fragment_lstm_linear = nn.Linear(d*fragment_nhid, fragment_emsize)
+            _log_fn(f"RNNModel.fragment_lstm       : created")
+            _log_fn(f"RNNModel.fragment_lstm_linear: created")
+        elif self.fragment_aggregate_mode == 'CNN':
+            self.fragment_cnn3 = nn.Conv2d(in_channels=1, out_channels=fragment_emsize,
+                                           kernel_size=(3, fragment_emsize), padding=(2, 0))
+            _log_fn(f"RNNModel.fragment_cnn3  : created")
+        elif not self.fragment_aggregate_mode: # '', 0, None
+            _log_fn(f"RNNModel will not use fragment-encoding")
         else:
-            raise Exception(f"Unsupported char_mode: {self.char_mode}")
+            raise Exception(f"Unsupported fragment_aggregate_mode: {self.fragment_aggregate_mode}")
 
     @staticmethod
     def gen_rnn(rnn_type, ninp, nhid, nlayers, dropout):
@@ -97,15 +100,15 @@ class RNNModel(nn.Module):
         nn.init.zeros_(self.decoder.bias)
         nn.init.uniform_(self.decoder.weight, -init_range, init_range)
 
-    def forward(self, inputs, chars3):              # input size  [35, 20]
+    def forward(self, inputs, fragment3D):          # input size  [35, 20]
         # Starting each batch, we detach the hidden state from how it was previously produced.
         # If we didn't, the model would try back-propagating all the way to start of the dataset.
         h = self.repackage_hidden(self.hid_state)
 
         emb = self.drop(self.encoder(inputs))       # return size [35, 20, 200]
-        if self.char_mode:
-            char_embeds = self.get_char_embeds(chars3)
-            emb = torch.cat((emb, char_embeds), dim=2)
+        if self.fragment_aggregate_mode:
+            embeds = self.get_fragment_embeds(fragment3D)
+            emb = torch.cat((emb, embeds), dim=2)
         output, h = self.rnn(emb, h)                # return size [35, 20, 200]
         self.hid_state = h
         output = self.drop(output)
@@ -113,49 +116,50 @@ class RNNModel(nn.Module):
         decoded = decoded.view(-1, self.ntoken)     # return size [700, 33278]
         return F.log_softmax(decoded, dim=1)
 
-    def get_char_embeds(self, chars3):
-        chars3_masked = handle_chars3(chars3)
-        chars3_masked = chars3_masked.to(self.device)
-        chars_embeds = self.char_embeds(chars3_masked)
-        # size: (35, 20, 13, 25). (bptt, bsz, max_word_len, char_emsize)
+    def get_fragment_embeds(self, fragment3D):
+        masked = mask_fragment3dim(fragment3D)
+        masked = masked.to(self.device)
+        embeds = self.fragment_embeds(masked)
+        # size: (35, 20, 13, 25). (bptt, bsz, max_word_len, fragment_emsize)
 
-        d0, d1, d2, d3 = chars_embeds.size()
-        chars_embeds = chars_embeds.view(-1, d2, d3)  # (700 13 25)
-        if self.char_mode == 'LSTM':
-            chars_embeds = chars_embeds.transpose(0, 1) # (13 700 25)
-            chars3_length = torch.ne(chars3_masked, 0).sum(dim=2).view(-1).cpu()
-            packed = torch.nn.utils.rnn.pack_padded_sequence(chars_embeds, chars3_length, enforce_sorted=False)
-            lstm_out, _ = self.char_lstm(packed)
+        d0, d1, d2, d3 = embeds.size()
+        embeds = embeds.view(-1, d2, d3)  # (700 13 25)
+        if self.fragment_aggregate_mode == 'LSTM':
+            embeds = embeds.transpose(0, 1) # (13 700 25)
+            length = torch.ne(masked, 0).sum(dim=2).view(-1).cpu()
+            packed = torch.nn.utils.rnn.pack_padded_sequence(embeds, length, enforce_sorted=False)
+            lstm_out, _ = self.fragment_lstm(packed)
 
             outputs, output_lengths = torch.nn.utils.rnn.pad_packed_sequence(lstm_out)
             # outputs size: (13 700 200); output_lengths size: (700,)
 
             outputs = outputs.transpose(0, 1)  # outputs size: (700 13 200)
 
-            chars_embeds = Variable(torch.FloatTensor(torch.zeros((outputs.size(0), outputs.size(2)))))
-            chars_embeds = chars_embeds.to(self.device)  # (700 200)
+            embeds = Variable(torch.FloatTensor(torch.zeros((outputs.size(0), outputs.size(2)))))
+            embeds = embeds.to(self.device)  # (700 200)
 
-            c_hid = self.char_nhid
+            c_hid = self.fragment_nhid
             for i, ol in enumerate(output_lengths):
-                chars_embeds[i] = torch.cat((outputs[i, ol - 1, :c_hid], outputs[i, 0, c_hid:]))
+                embeds[i] = torch.cat((outputs[i, ol - 1, :c_hid], outputs[i, 0, c_hid:]))
 
-            chars_embeds = self.char_lstm_linear(chars_embeds) # (700 25)
+            embeds = self.fragment_lstm_linear(embeds) # (700 25)
         else:
-            chars_embeds = chars_embeds.unsqueeze(1)      # (700 1 13 25)
+            embeds = embeds.unsqueeze(1)      # (700 1 13 25)
 
-            # Creating Character level representation using Convolutional Neural Network
+            # Creating fragment level representation using Convolutional Neural Network
+            # fragment could be character or subword
             # followed by a Maxpooling Layer
             # size: (700 25 15 1) <= (700 1 13 25)
-            out3 = self.char_cnn3(chars_embeds)
+            out3 = self.fragment_cnn3(embeds)
 
             # size: (700 25 1 1) <= (700 25 15 1)
-            chars_embeds = nn.functional.max_pool2d(out3, kernel_size=(out3.size(2), 1))
+            embeds = nn.functional.max_pool2d(out3, kernel_size=(out3.size(2), 1))
 
             # size: (700 25) <= (700 25 1 1)
-            chars_embeds = chars_embeds.squeeze(3)
-            chars_embeds = chars_embeds.squeeze(2)
-        chars_embeds = chars_embeds.view(d0, d1, -1)
-        return chars_embeds
+            embeds = embeds.squeeze(3)
+            embeds = embeds.squeeze(2)
+        embeds = embeds.view(d0, d1, -1)
+        return embeds
 
     def init_hidden(self, bsz):
         weight = next(self.parameters())
@@ -175,21 +179,21 @@ class RNNModel(nn.Module):
         else:
             return tuple(self.repackage_hidden(v) for v in h)
 
-def handle_chars3(chars3):
+def mask_fragment3dim(fragment3D):
     max_len = 0
     # find max length (max word size)
-    for row in chars3:
+    for row in fragment3D:
         for col in row:
             max_len = max(max_len, len(col))
     # Padding each word to max word size of that sentence
-    dim0 = len(chars3)
-    dim1 = len(chars3[0])
-    chars3_masked = np.zeros((dim0, dim1, max_len), dtype='int')
+    dim0 = len(fragment3D)
+    dim1 = len(fragment3D[0])
+    masked = np.zeros((dim0, dim1, max_len), dtype='int')
     for i in range(dim0):
         for j in range(dim1):
-            chars3_masked[i, j, :len(chars3[i][j])] = chars3[i][j]
-    chars3_masked = Variable(torch.LongTensor(chars3_masked))
-    return chars3_masked
+            masked[i, j, :len(fragment3D[i][j])] = fragment3D[i][j]
+    masked = Variable(torch.LongTensor(masked))
+    return masked
 
 def init_lstm(input_lstm):
     """

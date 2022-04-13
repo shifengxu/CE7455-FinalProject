@@ -10,6 +10,7 @@ from collections import OrderedDict
 from data import Corpus, get_batch
 from models.model_rnn import RNNModel
 import utils
+from subwords.subword_adapter import SubwordAdapter
 from utils import log_info
 
 log_fn = log_info  # define the log function
@@ -25,10 +26,12 @@ parser.add_argument('--nhid', type=int, default=200,
                     help='number of hidden units per layer')
 parser.add_argument('--nlayers', type=int, default=2,
                     help='number of layers')
-parser.add_argument('--subword_vs_list', nargs='+', type=int, default=[0, 5000],
+parser.add_argument('--subword_vocab_size', nargs='+', type=int, default=0,
                     help='subword vocabulary size list. 0 means no subword')
-parser.add_argument('--char_mode_list', nargs='+', type=str, default=['None', 'CNN'],
-                    help='char_mode list: None|CNN|LSTM')
+parser.add_argument('--word_split_mode_list', nargs='+', type=str, default=['Char', 'Subword.1000'],
+                    help='word split modes: Char|Subword.1000|Subword.5000')
+parser.add_argument('--fragment_aggregate_mode_list', nargs='+', type=str, default=['None', 'CNN', 'LSTM'],
+                    help='fragment (char or subword) aggregation modes: None|CNN|LSTM')
 parser.add_argument('--gpu_ids', nargs='+', type=int, default=[0],
                     help='GPU ID list')
 parser.add_argument('--lr', type=float, default=20,
@@ -123,7 +126,7 @@ def train(epoch, train_data, model, lr, criterion, corpus: Corpus):
             loss_total = 0.
             loss_cnt = 0
 
-def run(subword_vs, char_mode):
+def run(word_split_mode, fragment_aggregate_mode):
     train_file_list = [OsPath.join(args.data_dir, f) for f in args.train_file_list]
     valid_file_list = [OsPath.join(args.data_dir, f) for f in args.valid_file_list]
     test_file_list  = [OsPath.join(args.data_dir, f) for f in args.test_file_list]
@@ -131,7 +134,7 @@ def run(subword_vs, char_mode):
         train_file_list,
         valid_file_list,
         test_file_list,
-        subword_vocab_size=subword_vs,
+        subword_vocab_size=args.subword_vocab_size,
         log_fn=log_fn
     )
     train_data = corpus.batchify(train_file_list, args.batch_size)
@@ -145,12 +148,20 @@ def run(subword_vs, char_mode):
         test_data_list.append((batched, file))
 
     ntokens = corpus.ntokens
-    if char_mode is None or char_mode.lower() == 'none':
-        char_mode = ''
+    if fragment_aggregate_mode is None or fragment_aggregate_mode.lower() == 'none':
+        fragment_aggregate_mode = ''
+    if word_split_mode == 'Char':
+        subword_adapter = None
+    else: # Subword.1000
+        v_str = word_split_mode.split('.')[1]
+        v_size = int(v_str)
+        subword_adapter = SubwordAdapter(train_file_list + valid_file_list, v_size)
+
     char_cnt = corpus.char_count + 1  # char id starts from 1. So need to plus 1.
     model = RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
                      args.dropout, args.tied, log_fn=log_fn, device=device,
-                     char_mode=char_mode, char_cnt=char_cnt)
+                     fragment_aggregate_mode=fragment_aggregate_mode,
+                     fragment_cnt=char_cnt)
     model = model.to(device)
     criterion = nn.NLLLoss()
     lr = args.lr
@@ -207,12 +218,12 @@ def run(subword_vs, char_mode):
 # run()
 
 def main():
-    for vs in args.subword_vs_list:
-        for char_mode in args.char_mode_list:
-            log_file = f"./output_sws_{vs:05d}_chm_{char_mode}.log"
+    for word_split_mode in args.word_split_mode_list:
+        for fragment_aggregate_mode in args.fragment_aggregate_mode_list:
+            log_file = f"./output_wsm_{word_split_mode}_fam_{fragment_aggregate_mode}.log"
             print(f"Log file: {log_file} open...")
             utils.log_info_file = open(log_file, 'w')
-            run(vs, char_mode)
+            run(word_split_mode, fragment_aggregate_mode)
             utils.log_info_file.close()
             utils.log_info_file = None
             print(f"Log file: {log_file} closed.")
