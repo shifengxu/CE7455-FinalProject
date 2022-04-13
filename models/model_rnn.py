@@ -53,7 +53,7 @@ class RNNModel(nn.Module):
             wt = self.fragment_embeds.weight
             bias = np.sqrt(3.0 / wt.size(1))  # init embedding. copied from A1
             nn.init.uniform_(wt, -bias, bias)
-            _log_fn(f"RNNModel.fragment_embeds: created")
+            _log_fn(f"RNNModel.fragment_embeds     : created")
         if self.fragment_aggregate_mode == 'LSTM':
             self.fragment_lstm = nn.LSTM(fragment_emsize, fragment_nhid, num_layers=1)
             init_lstm(self.fragment_lstm)
@@ -64,7 +64,7 @@ class RNNModel(nn.Module):
         elif self.fragment_aggregate_mode == 'CNN':
             self.fragment_cnn3 = nn.Conv2d(in_channels=1, out_channels=fragment_emsize,
                                            kernel_size=(3, fragment_emsize), padding=(2, 0))
-            _log_fn(f"RNNModel.fragment_cnn3  : created")
+            _log_fn(f"RNNModel.fragment_cnn3       : created")
         elif not self.fragment_aggregate_mode: # '', 0, None
             _log_fn(f"RNNModel will not use fragment-encoding")
         else:

@@ -167,6 +167,7 @@ class Corpus(object):
         :return:
         """
         res = []
+        c_cnt = 0 # char count
         for _, x in enumerate(word_tensor):
             x_arr = []
             for _, w_idx in enumerate(x):  # word index
@@ -178,7 +179,8 @@ class Corpus(object):
                     else:
                         self._log_fn(f"!!![Warn] Not found char {c} in corpus.char_id_dict.")
                 x_arr.append(c_idx_arr)
+                c_cnt += len(c_idx_arr)
             # for
             res.append(x_arr)
         # for
-        return res
+        return res, c_cnt

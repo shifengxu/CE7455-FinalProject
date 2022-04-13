@@ -71,19 +71,26 @@ log_fn(f"device: {device}")
 # Set the random seed manually for reproducibility.
 torch.manual_seed(args.seed)
 
-def evaluate(data_source, model, criterion, corpus: Corpus):
+def evaluate(data_source, model, criterion, corpus: Corpus, subword_adapter: SubwordAdapter):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     total_loss = 0.
     numerator = 0
     denominator = 0
     model.init_hidden(args.batch_size)
+    word_cnt = 0
+    frag_cnt = 0
     with torch.no_grad():
         for i in range(0, data_source.size(0) - 1, args.bptt):
             inputs, targets = get_batch(data_source, i, args.bptt)
             # inputs size: (35, 10), targets size (350,). 35 is bptt, 10 is bsz
-            chars3 = corpus.word_to_char(inputs)
-            outputs = model(inputs, chars3)
+            if subword_adapter:
+                fragment3D, f_cnt = subword_adapter.inputs_to_ids(inputs, corpus.dictionary.idx2word)
+            else:
+                fragment3D, f_cnt = corpus.word_to_char(inputs)
+            word_cnt += inputs.numel()
+            frag_cnt += f_cnt
+            outputs = model(inputs, fragment3D)
             # outputs size(350, 37974)
             total_loss += len(inputs) * criterion(outputs, targets).item()
             preds = torch.argmax(outputs, dim=1)
@@ -91,21 +98,30 @@ def evaluate(data_source, model, criterion, corpus: Corpus):
             denominator += len(targets)
     loss = total_loss / (len(data_source) - 1)
     accu = numerator / denominator
-    return loss, accu, numerator, denominator
+    w_len = frag_cnt / word_cnt
+    return loss, accu, numerator, denominator, w_len, frag_cnt, word_cnt
 
-def train(epoch, train_data, model, lr, criterion, corpus: Corpus):
+def train(epoch, train_data, model, lr, criterion, corpus: Corpus,
+          subword_adapter: SubwordAdapter):
     # Turn on training mode which enables dropout.
     model.train()
     loss_total = 0.
     loss_cnt = 0
+    word_cnt = 0
+    frag_cnt = 0  # fragment count
     b_cnt = len(train_data) // args.bptt  # batch count
     model.init_hidden(args.batch_size)
     for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
         b_num = batch + 1 # batch number
         inputs, targets = get_batch(train_data, i, args.bptt)
-        chars3 = corpus.word_to_char(inputs)
+        if subword_adapter:
+            fragment3D, f_cnt = subword_adapter.inputs_to_ids(inputs, corpus.dictionary.idx2word)
+        else:
+            fragment3D, f_cnt = corpus.word_to_char(inputs)
+        word_cnt += inputs.numel()
+        frag_cnt += f_cnt
         model.zero_grad()
-        output = model(inputs, chars3)
+        output = model(inputs, fragment3D)
         # output size: [700, 33278]
         loss = criterion(output, targets)
         loss.backward()
@@ -120,11 +136,15 @@ def train(epoch, train_data, model, lr, criterion, corpus: Corpus):
 
         if b_num % args.log_interval == 0 or b_num == b_cnt:
             cur_loss = loss_total / loss_cnt
+            w_len = frag_cnt / word_cnt
             msg = f"E{epoch:03d} | {b_num:5d}/{b_cnt} batches | lr {lr:02.4f} | " \
-                  f"loss {cur_loss:6.3f} | ppl {math.exp(cur_loss):9.2f}"
+                  f"loss {cur_loss:6.3f} | ppl {math.exp(cur_loss):9.2f} " \
+                  f"frag_cnt/word_cnt={w_len:4.3f}={frag_cnt}/{word_cnt}"
             log_fn(msg)
             loss_total = 0.
             loss_cnt = 0
+            word_cnt = 0
+            frag_cnt = 0
 
 def run(word_split_mode, fragment_aggregate_mode):
     train_file_list = [OsPath.join(args.data_dir, f) for f in args.train_file_list]
@@ -150,18 +170,24 @@ def run(word_split_mode, fragment_aggregate_mode):
     ntokens = corpus.ntokens
     if fragment_aggregate_mode is None or fragment_aggregate_mode.lower() == 'none':
         fragment_aggregate_mode = ''
-    if word_split_mode == 'Char':
+    if word_split_mode.lower() == 'char':
         subword_adapter = None
+        log_fn(f"subword_adapter = None due to word_split_mode='{word_split_mode}'")
+        fragment_cnt = corpus.char_count + 1  # char id starts from 1. So need to plus 1.
     else: # Subword.1000
+        log_fn(f"subword_adapter will be generated due to word_split_mode='{word_split_mode}'")
         v_str = word_split_mode.split('.')[1]
         v_size = int(v_str)
-        subword_adapter = SubwordAdapter(train_file_list + valid_file_list, v_size)
+        subword_adapter = SubwordAdapter(train_file_list + valid_file_list, v_size, log_fn=log_fn)
+        fragment_cnt = v_size + 2
+        # Why plus 2:
+        # 1) subword id starts from 1.
+        # 2) if subword encoder returns empty (for example when encode "/"), return special id
 
-    char_cnt = corpus.char_count + 1  # char id starts from 1. So need to plus 1.
     model = RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
                      args.dropout, args.tied, log_fn=log_fn, device=device,
                      fragment_aggregate_mode=fragment_aggregate_mode,
-                     fragment_cnt=char_cnt)
+                     fragment_cnt=fragment_cnt)
     model = model.to(device)
     criterion = nn.NLLLoss()
     lr = args.lr
@@ -173,14 +199,16 @@ def run(word_split_mode, fragment_aggregate_mode):
 
     for epoch in range(1, args.epochs + 1):
         log_fn(f"Epoch {epoch:03d}/{args.epochs} ==================================================")
-        train(epoch, train_data, model, lr, criterion, corpus)
-        l, a, n, d = evaluate(val_data, model, criterion, corpus)
-        log_fn(f"End E{epoch:03d} | valid loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d}")
+        train(epoch, train_data, model, lr, criterion, corpus, subword_adapter)
+        l, a, n, d, wl, fc, wc = evaluate(val_data, model, criterion, corpus, subword_adapter)
+        log_fn(f"End E{epoch:03d} | valid loss {l:6.3f}; ppl {math.exp(l):9.2f} | "
+               f"accu {a:6.4f} = {n}/{d} | w_len {wl:6.4f} = {fc}/{wc}")
         stat_dict['valid_loss'].append(l)
         val_loss = l
         for test_data, file in test_data_list:
-            l, a, n, d = evaluate(test_data, model, criterion, corpus)
-            log_fn(f"End E{epoch:03d} |  test loss {l:6.3f}; ppl {math.exp(l):9.2f} | accu {a:6.4f} = {n}/{d} {file}")
+            l, a, n, d, wl, fc, wc = evaluate(test_data, model, criterion, corpus, subword_adapter)
+            log_fn(f"End E{epoch:03d} |  test loss {l:6.3f}; ppl {math.exp(l):9.2f} | "
+                   f"accu {a:6.4f} = {n}/{d} | w_len {wl:6.4f} = {fc}/{wc} {file}")
             stat_dict[f"test_loss of {file}"].append(l)
         # Save the model if the validation loss is the best we've seen so far.
         if not best_val_loss or val_loss < best_val_loss:
@@ -205,8 +233,9 @@ def run(word_split_mode, fragment_aggregate_mode):
 
     # Run on test data.
     for test_data, file in test_data_list:
-        l, a, n, d  = evaluate(test_data, model, criterion, corpus)
-        log_fn(f"End. test loss {l:5.2f}; ppl {math.exp(l):8.2f} | accu {a:6.4f} = {n}/{d} {file}")
+        l, a, n, d, wl, fc, wc = evaluate(test_data, model, criterion, corpus, subword_adapter)
+        log_fn(f"End. test loss {l:5.2f}; ppl {math.exp(l):8.2f} | "
+               f"accu {a:6.4f} = {n}/{d} | w_len {wl:6.4f} = {fc}/{wc} {file}")
     log_fn('=' * 89)
     for k, ls_list in stat_dict.items():
         log_fn(k)
@@ -215,6 +244,9 @@ def run(word_split_mode, fragment_aggregate_mode):
         log_fn(f"{k} ppl")
         str_list = [f"{math.exp(ls):8.2f}" for ls in ls_list]
         log_fn(','.join(str_list))
+    log_fn('')  # 3 empty lines by the end of the running
+    log_fn('')
+    log_fn('')
 # run()
 
 def main():
