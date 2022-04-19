@@ -14,17 +14,26 @@ argument                     | remarks
 word_split_mode_list         | None or Char or Subword.200, Subword.1000. "None" means no word splitting, and no character/subword embedding. "Char" means to split word into characters. "Subword.1000" means to split word into subwords, and the subword vocabulary capacity is 1000.
 fragment_aggregate_mode_list | CNN or LSTM. If word_split_mode is "None", then this argument is no use.
 
-In the `main.py` file, it will iterate each word_split_mode in `word_split_mode_list`, and each fragment_aggregate_mode in `fragment_aggregate_mode_list`. In other words, it is a for-loop nested in another for-loop. For example, if word_split_mode_list is "None Char subword.1000", and fragment_aggregate_mode_list is "CNN LSTM", then it will train 5 times:
+In the `main.py` file, it will iterate each word_split_mode in `word_split_mode_list`, and each fragment_aggregate_mode in `fragment_aggregate_mode_list`. In other words, it is a for-loop nested in another for-loop. For example, if word_split_mode_list is "None Char subword.1000", and fragment_aggregate_mode_list is "CNN LSTM", then it will train 5 times (5 runnings):
   * only train on words;
   * split word into characters, and aggregate characters with CNN;
   * split word into characters, and aggregate characters with LSTM;
   * split word into subwords whose vocabulary size 1000, and aggregate subwords with CNN;
   * split word into subwords whose vocabulary size 1000, and aggregate subwords with SLTM;
 
+For each running, it will generate separate log file to save the outputs. And the log file names may look like this:
+log file name                        | remarks
+------------------------------------ | ----------------------------------------------
+output_wsm_None_fam_NoUse.log        | word-split-mode is None, fragment-aggregate-mode is NoUse 
+output_wsm_Char_fam_CNN.log          | word-split-mode is Char, fragment-aggregate-mode is CNN
+output_wsm_Char_fam_LSTM.log         | word-split-mode is Char, fragment-aggregate-mode is LSTM
+output_wsm_Subword.1000_fam_CNN.log  | word-split-mode is Subword with vocabulary size 1000, fragment-aggregate-mode is CNN
+output_wsm_Subword.1000_fam_LSTM.log | word-split-mode is Subword with vocabulary size 1000, fragment-aggregate-mode is LSTM
+
 Here is sample command to run.
 ```bash
 python -u main.py --data_dir ./data/sample_500k --gpu_ids 1 \
-	--word_split_mode_list Char Subword.200 Subword.500 Subword.1000 Subword.2000 Subword.5000 Subword.10000 \
+	--word_split_mode_list None Char Subword.1000 \
 	--fragment_aggregate_mode_list CNN LSTM \
 	--epochs 20 \
 	--train_file_list cbt_train.txt \
