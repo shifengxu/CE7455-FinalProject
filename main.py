@@ -28,17 +28,17 @@ parser.add_argument('--nlayers', type=int, default=2,
                     help='number of layers')
 parser.add_argument('--subword_vocab_size', nargs='+', type=int, default=0,
                     help='subword vocabulary size list. 0 means no subword')
-parser.add_argument('--word_split_mode_list', nargs='+', type=str, default=['Char', 'Subword.1000'],
-                    help='word split modes: Char|Subword.1000|Subword.5000')
-parser.add_argument('--fragment_aggregate_mode_list', nargs='+', type=str, default=['None', 'CNN', 'LSTM'],
-                    help='fragment (char or subword) aggregation modes: None|CNN|LSTM')
+parser.add_argument('--word_split_mode_list', nargs='+', type=str, default=['None', 'Char', 'Subword.1000'],
+                    help='word split modes: None|Char|Subword.1000|Subword.5000')
+parser.add_argument('--fragment_aggregate_mode_list', nargs='+', type=str, default=['CNN', 'LSTM'],
+                    help='fragment (char or subword) aggregation modes: CNN|LSTM')
 parser.add_argument('--gpu_ids', nargs='+', type=int, default=[0],
                     help='GPU ID list')
 parser.add_argument('--lr', type=float, default=20,
                     help='initial learning rate')
 parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
-parser.add_argument('--epochs', type=int, default=40,
+parser.add_argument('--epochs', type=int, default=1,
                     help='upper epoch limit')
 parser.add_argument('--batch_size', type=int, default=20, metavar='N',
                     help='batch size')
@@ -168,9 +168,7 @@ def run(word_split_mode, fragment_aggregate_mode):
         test_data_list.append((batched, file))
 
     ntokens = corpus.ntokens
-    if fragment_aggregate_mode is None or fragment_aggregate_mode.lower() == 'none':
-        fragment_aggregate_mode = ''
-    if word_split_mode.lower() == 'char':
+    if word_split_mode is None or word_split_mode.lower() in ['none', 'char']:
         subword_adapter = None
         log_fn(f"subword_adapter = None due to word_split_mode='{word_split_mode}'")
         fragment_cnt = corpus.char_count + 1  # char id starts from 1. So need to plus 1.
@@ -251,6 +249,16 @@ def run(word_split_mode, fragment_aggregate_mode):
 
 def main():
     for word_split_mode in args.word_split_mode_list:
+        if word_split_mode is None or word_split_mode.lower() == 'none':
+            log_file = f"./output_wsm_{word_split_mode}_fam_NoUse.log"
+            print(f"Log file: {log_file} open...")
+            utils.log_info_file = open(log_file, 'w')
+            run(word_split_mode, '')  # fragment_aggregate_mode is no use
+            utils.log_info_file.close()
+            utils.log_info_file = None
+            print(f"Log file: {log_file} closed.")
+            continue
+
         for fragment_aggregate_mode in args.fragment_aggregate_mode_list:
             log_file = f"./output_wsm_{word_split_mode}_fam_{fragment_aggregate_mode}.log"
             print(f"Log file: {log_file} open...")
