@@ -1,5 +1,9 @@
 # CE7455-FinalProject
 
+![](./images/child-to-adult.png)
+
+FROM CHILD TO ADULT: DEVELOPING NLP MODELS WITH SCALABILITY AND ABILITY TO CONTINUOUS LEARNING
+
 ## Contribution of each member
 
 While all teammates made essential contributions towards the dataset processing, model development, and report analysis, here is a summary of each student's main contribution.
@@ -9,6 +13,19 @@ While all teammates made essential contributions towards the dataset processing,
 ```Li Yang``` contributed most significantly to the analysis of the datasets, visualisation of experimentation results, and recording of the final presentation.
 
 ```Shifeng``` contributed most significantly in the model development of the word and hybrid models, and running of experimentation iterations.
+
+## Main Idea
+
+In natural language processing, we want our model to have these ideal features:
+1. Scalable
+2. Continuously learning
+3. Apply knowledge to a related but different domain
+
+<img src="./images/scale-and-grow.png" width="800" />
+
+For more details about corpus data, please go to [data](./data).
+
+For more detials about model, please go to [models](./models).
 
 ## Key concept
 
