@@ -1,8 +1,17 @@
 # CE7455-FinalProject
 
-## How to run
+## Contribution of each member
 
-The entry file is ```main.py```. And before running, here are some special concepts.
+While all teammates made essential contributions towards the dataset processing, model development, and report analysis, here is a summary of each student's main contribution.
+
+```Ann``` contributed most significantly to the background research, consolidation of ideas and report writing.
+
+```Li Yang``` contributed most significantly to the analysis of the datasets, visualisation of experimentation results, and recording of the final presentation.
+
+```Shifeng``` contributed most significantly in the model development of the word and hybrid models, and running of experimentation iterations.
+
+## Key concept
+
 concept            | remarks
 -------------------|-----------------------------------------------------------------
 fragment           | We can split an individual word into characters or subwords. Both character and subword are called fragment of a word.
@@ -13,6 +22,10 @@ argument                     | remarks
 -----------------------------|-----------------------------------------------------------------
 word_split_mode_list         | None or Char or Subword.200, Subword.1000. "None" means no word splitting, and no character/subword embedding. "Char" means to split word into characters. "Subword.1000" means to split word into subwords, and the subword vocabulary capacity is 1000.
 fragment_aggregate_mode_list | CNN or LSTM. If word_split_mode is "None", then this argument is no use.
+
+## How to run
+
+The entry file is ```main.py```.
 
 In the `main.py` file, it will iterate each word_split_mode in `word_split_mode_list`, and each fragment_aggregate_mode in `fragment_aggregate_mode_list`. In other words, it is a for-loop nested in another for-loop. For example, if word_split_mode_list is "None Char subword.1000", and fragment_aggregate_mode_list is "CNN LSTM", then it will train 5 times (5 runnings):
   * only train on words;
@@ -49,6 +62,8 @@ python -u main.py --data_dir ./data/sample_500k --gpu_ids 1 \
 
 ```
 
+## Sample Output
+
 Sample output:  corpus initialization
 ```
 [2022-04-13 12:11:36.959] corpus.train_file_list: 1
@@ -63,21 +78,6 @@ Sample output:  corpus initialization
 [2022-04-13 12:11:36.959] corpus tokenize...
 [2022-04-13 12:11:37.655]         train tokens: 511735  ../data/sample_500k/cbt_train.txt
 [2022-04-13 12:11:37.800]         valid tokens: 115417  ../data/sample_500k/cbt_valid.txt
-. . . . .
-```
-
-Sample output: first epoch
-```
-[2022-04-13 12:11:41.276] Epoch 001/20 ==================================================
-[2022-04-13 12:11:56.466] E001 |   200/731 batches | lr 20.0000 | loss  7.408 | ppl   1649.42 frag_cnt/word_cnt=2.164=302933/140000
-[2022-04-13 12:12:11.715] E001 |   400/731 batches | lr 20.0000 | loss  5.989 | ppl    398.82 frag_cnt/word_cnt=2.172=304046/140000
-[2022-04-13 12:12:26.730] E001 |   600/731 batches | lr 20.0000 | loss  5.351 | ppl    210.91 frag_cnt/word_cnt=2.148=300690/140000
-[2022-04-13 12:12:36.594] E001 |   731/731 batches | lr 20.0000 | loss  5.187 | ppl    179.02 frag_cnt/word_cnt=2.150=197171/91700
-[2022-04-13 12:12:41.936] End E001 | valid loss  5.359; ppl    212.44 | accu 0.1528 = 17633/115380 | w_len 2.1181 = 244384/115380
-[2022-04-13 12:12:47.236] End E001 |  test loss  8.902; ppl   7344.12 | accu 0.0282 = 3161/112220 | w_len 2.7297 = 306328/112220 ../data/sample_500k/adolescent_valid.txt
-[2022-04-13 12:13:11.196] End E001 |  test loss  9.040; ppl   8435.13 | accu 0.0283 = 14328/506840 | w_len 3.0106 = 1525890/506840 ../data/sample_500k/adult_test.txt
-[2022-04-13 12:13:11.196] Save: model.pt... 
-[2022-04-13 12:13:11.646] Save: model.pt...Done. best_val_loss: 5.3586
 . . . . .
 ```
 
@@ -96,6 +96,21 @@ Sample output: model initialization
 [2022-04-13 12:11:41.089] RNNModel.fragment_nhid          : 200
 [2022-04-13 12:11:41.089] RNNModel.fragment_embeds     : created
 [2022-04-13 12:11:41.090] RNNModel.fragment_cnn3       : created
+. . . . .
+```
+
+Sample output: first epoch
+```
+[2022-04-13 12:11:41.276] Epoch 001/20 ==================================================
+[2022-04-13 12:11:56.466] E001 |   200/731 batches | lr 20.0000 | loss  7.408 | ppl   1649.42 frag_cnt/word_cnt=2.164=302933/140000
+[2022-04-13 12:12:11.715] E001 |   400/731 batches | lr 20.0000 | loss  5.989 | ppl    398.82 frag_cnt/word_cnt=2.172=304046/140000
+[2022-04-13 12:12:26.730] E001 |   600/731 batches | lr 20.0000 | loss  5.351 | ppl    210.91 frag_cnt/word_cnt=2.148=300690/140000
+[2022-04-13 12:12:36.594] E001 |   731/731 batches | lr 20.0000 | loss  5.187 | ppl    179.02 frag_cnt/word_cnt=2.150=197171/91700
+[2022-04-13 12:12:41.936] End E001 | valid loss  5.359; ppl    212.44 | accu 0.1528 = 17633/115380 | w_len 2.1181 = 244384/115380
+[2022-04-13 12:12:47.236] End E001 |  test loss  8.902; ppl   7344.12 | accu 0.0282 = 3161/112220 | w_len 2.7297 = 306328/112220 ../data/sample_500k/adolescent_valid.txt
+[2022-04-13 12:13:11.196] End E001 |  test loss  9.040; ppl   8435.13 | accu 0.0283 = 14328/506840 | w_len 3.0106 = 1525890/506840 ../data/sample_500k/adult_test.txt
+[2022-04-13 12:13:11.196] Save: model.pt... 
+[2022-04-13 12:13:11.646] Save: model.pt...Done. best_val_loss: 5.3586
 . . . . .
 ```
 
